@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
+import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IStorageService, STORAGE_SERVICE } from '../storage/storage.interface';
 import { CreateCleaningDto } from './dto/create-cleaning.dto';
@@ -8,14 +9,18 @@ import { CreateCleaningDto } from './dto/create-cleaning.dto';
 export class CleaningsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly address: AddressService,
     @Inject(STORAGE_SERVICE) private readonly storage: IStorageService,
   ) {}
 
   async create(dto: CreateCleaningDto, cleanerId: string, photo: Express.Multer.File) {
-    const entrance = await this.prisma.entrance.findUnique({ where: { id: dto.entranceId } });
+    const entrance = await this.prisma.entrance.findUnique({
+      where: { id: dto.entranceId },
+      include: { building: { include: { street: true } } },
+    });
     if (!entrance) throw new BadRequestException('Entrance not found');
-    if (dto.floor < 1 || dto.floor > entrance.floorsTotal) {
-      throw new BadRequestException(`Floor must be between 1 and ${entrance.floorsTotal}`);
+    if (dto.floor < 1 || dto.floor > entrance.building.floorsTotal) {
+      throw new BadRequestException(`Floor must be between 1 and ${entrance.building.floorsTotal}`);
     }
 
     const assignment = await this.prisma.cleanerAssignment.findUnique({
@@ -28,7 +33,7 @@ export class CleaningsService {
     const cleaning = await this.prisma.cleaning.create({
       data: { cleanerId, entranceId: dto.entranceId, floor: dto.floor, photoPath },
       include: {
-        entrance: { select: { id: true, number: true, address: true } },
+        entrance: { include: { building: { include: { street: true } } } },
         cleaner: { select: { id: true, name: true } },
       },
     });
@@ -51,7 +56,7 @@ export class CleaningsService {
       where,
       orderBy: { createdAt: 'desc' },
       include: {
-        entrance: { select: { id: true, number: true, address: true } },
+        entrance: { include: { building: { include: { street: true } } } },
         cleaner: { select: { id: true, name: true } },
       },
     });
@@ -61,14 +66,20 @@ export class CleaningsService {
 
   private serialize(cleaning: Prisma.CleaningGetPayload<{
     include: {
-      entrance: { select: { id: true; number: true; address: true } };
+      entrance: { include: { building: { include: { street: true } } } };
       cleaner: { select: { id: true; name: true } };
     };
   }>) {
+    const entrance = this.address.serializeEntrance(cleaning.entrance);
     return {
       id: cleaning.id,
       cleaner: cleaning.cleaner,
-      entrance: cleaning.entrance,
+      entrance,
+      address: entrance.address,
+      streetName: entrance.streetName,
+      buildingNumber: entrance.buildingNumber,
+      entranceNumber: entrance.entranceNumber,
+      floorsTotal: entrance.floorsTotal,
       floor: cleaning.floor,
       photoUrl: this.storage.getUrl(cleaning.photoPath),
       createdAt: cleaning.createdAt,

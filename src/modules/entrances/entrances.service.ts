@@ -5,31 +5,69 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
+import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEntranceDto } from './dto/create-entrance.dto';
 import { UpdateEntranceDto } from './dto/update-entrance.dto';
 
 @Injectable()
 export class EntrancesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly address: AddressService,
+  ) {}
 
-  list() {
-    return this.prisma.entrance.findMany({
-      orderBy: [{ address: 'asc' }, { number: 'asc' }],
+  async list(buildingId?: string) {
+    const entrances = await this.prisma.entrance.findMany({
+      where: buildingId ? { buildingId } : undefined,
+      orderBy: [
+        { building: { street: { name: 'asc' } } },
+        { building: { number: 'asc' } },
+        { number: 'asc' },
+      ],
       include: {
+        building: { include: { street: true } },
         assignments: { include: { cleaner: { select: { id: true, name: true } } } },
       },
     });
+
+    return entrances.map((entrance) => ({
+      ...this.address.serializeEntrance(entrance),
+      buildingId: entrance.buildingId,
+      assignments: entrance.assignments,
+      createdAt: entrance.createdAt,
+    }));
   }
 
   async create(dto: CreateEntranceDto) {
-    return this.prisma.entrance.create({ data: dto });
+    await this.ensureBuilding(dto.buildingId);
+    try {
+      const entrance = await this.prisma.entrance.create({
+        data: dto,
+        include: { building: { include: { street: true } } },
+      });
+      await this.refreshEntrancesCount(dto.buildingId);
+      return this.address.serializeEntrance(entrance);
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Entrance already exists in this building');
+      }
+      throw e;
+    }
   }
 
   async findOrThrow(id: string) {
-    const entrance = await this.prisma.entrance.findUnique({ where: { id } });
+    const entrance = await this.prisma.entrance.findUnique({
+      where: { id },
+      include: { building: { include: { street: true } } },
+    });
     if (!entrance) throw new NotFoundException('Entrance not found');
     return entrance;
+  }
+
+  async getDetails(id: string) {
+    const entrance = await this.findOrThrow(id);
+    return this.address.serializeEntrance(entrance);
   }
 
   async assignCleaner(entranceId: string, cleanerId: string) {
@@ -52,35 +90,37 @@ export class EntrancesService {
 
   async update(id: string, dto: UpdateEntranceDto) {
     const entrance = await this.findOrThrow(id);
-    const next = { ...entrance, ...dto };
+    if (dto.buildingId) await this.ensureBuilding(dto.buildingId);
 
-    // If shrinking floor count, refuse if existing reviews/cleanings reference higher floors.
-    if (dto.floorsTotal !== undefined && dto.floorsTotal < entrance.floorsTotal) {
-      const [r, c] = await Promise.all([
-        this.prisma.review.count({ where: { entranceId: id, floor: { gt: dto.floorsTotal } } }),
-        this.prisma.cleaning.count({ where: { entranceId: id, floor: { gt: dto.floorsTotal } } }),
-      ]);
-      if (r + c > 0) {
-        throw new ConflictException(
-          `Нельзя уменьшить число этажей: есть записи на этажах выше ${dto.floorsTotal}`,
-        );
+    try {
+      const updated = await this.prisma.entrance.update({
+        where: { id },
+        data: {
+          buildingId: dto.buildingId ?? entrance.buildingId,
+          number: dto.number ?? entrance.number,
+        },
+        include: { building: { include: { street: true } } },
+      });
+      if (dto.buildingId && dto.buildingId !== entrance.buildingId) {
+        await Promise.all([
+          this.refreshEntrancesCount(entrance.buildingId),
+          this.refreshEntrancesCount(dto.buildingId),
+        ]);
       }
+      return this.address.serializeEntrance(updated);
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw new ConflictException('Entrance already exists in this building');
+      }
+      throw e;
     }
-
-    return this.prisma.entrance.update({
-      where: { id },
-      data: {
-        number: next.number,
-        address: next.address,
-        floorsTotal: next.floorsTotal,
-      },
-    });
   }
 
   async remove(id: string) {
-    await this.findOrThrow(id);
+    const entrance = await this.findOrThrow(id);
     try {
       await this.prisma.entrance.delete({ where: { id } });
+      await this.refreshEntrancesCount(entrance.buildingId);
       return { ok: true };
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
@@ -90,5 +130,19 @@ export class EntrancesService {
       }
       throw e;
     }
+  }
+
+  private async ensureBuilding(buildingId: string) {
+    const building = await this.prisma.building.findUnique({ where: { id: buildingId } });
+    if (!building) throw new BadRequestException('Building not found');
+    return building;
+  }
+
+  private async refreshEntrancesCount(buildingId: string) {
+    const count = await this.prisma.entrance.count({ where: { buildingId } });
+    await this.prisma.building.update({
+      where: { id: buildingId },
+      data: { entrancesCount: count },
+    });
   }
 }

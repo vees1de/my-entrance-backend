@@ -13,6 +13,8 @@ async function main() {
   await prisma.qrCode.deleteMany();
   await prisma.user.deleteMany();
   await prisma.entrance.deleteMany();
+  await prisma.building.deleteMany();
+  await prisma.street.deleteMany();
 
   const passwordHash = await bcrypt.hash('manager123', 10);
   const cleanerPwd = await bcrypt.hash('cleaner123', 10);
@@ -21,12 +23,28 @@ async function main() {
     data: { login: 'manager', passwordHash, name: 'Анна Менеджер', role: Role.MANAGER },
   });
 
+  const [lenina, mira] = await Promise.all([
+    prisma.street.create({ data: { name: 'ул. Ленина' } }),
+    prisma.street.create({ data: { name: 'пр. Мира' } }),
+  ]);
+
+  const buildingA = await prisma.building.create({
+    data: { streetId: lenina.id, number: '12', floorsTotal: 9, entrancesCount: 4 },
+  });
+  const buildingB = await prisma.building.create({
+    data: { streetId: lenina.id, number: '14А', floorsTotal: 5, entrancesCount: 2 },
+  });
+  const buildingC = await prisma.building.create({
+    data: { streetId: mira.id, number: '7 к.1', floorsTotal: 16, entrancesCount: 1 },
+  });
+
+  const entranceSpecs = [
+    ...Array.from({ length: 4 }, (_, i) => ({ buildingId: buildingA.id, number: i + 1 })),
+    ...Array.from({ length: 2 }, (_, i) => ({ buildingId: buildingB.id, number: i + 1 })),
+    { buildingId: buildingC.id, number: 1 },
+  ];
   const entrances = await Promise.all(
-    [
-      { number: 1, address: 'ул. Ленина, 5', floorsTotal: 5 },
-      { number: 2, address: 'ул. Ленина, 5', floorsTotal: 9 },
-      { number: 3, address: 'пр. Мира, 12', floorsTotal: 14 },
-    ].map((data) => prisma.entrance.create({ data })),
+    entranceSpecs.map((data) => prisma.entrance.create({ data })),
   );
 
   const cleaners = await Promise.all(
@@ -36,69 +54,75 @@ async function main() {
       { login: 'cleaner3', name: 'Татьяна Сидорова', shift: 'Дневная' },
       { login: 'cleaner4', name: 'Елена Кузнецова', shift: 'Дневная' },
       { login: 'cleaner5', name: 'Светлана Морозова', shift: 'Вечерняя' },
-    ].map((c) =>
+      { login: 'cleaner6', name: 'Наталья Андреева', shift: 'Вечерняя' },
+      { login: 'cleaner7', name: 'Ирина Павлова', shift: 'Сменная' },
+    ].map((c, index) =>
       prisma.user.create({
-        data: { ...c, passwordHash: cleanerPwd, role: Role.CLEANER, phone: '+70000000000' },
+        data: {
+          ...c,
+          passwordHash: cleanerPwd,
+          role: Role.CLEANER,
+          phone: `+7000000000${index + 1}`,
+        },
       }),
     ),
   );
 
-  // assignments: cleaner1 -> e1; cleaner2 -> e2; cleaner3 -> e3; cleaner4 -> e1+e2 (M2M);
-  // cleaner5 -> none for now (для проверки floorsPlanned=0)
-  const assignments: Array<[number, number]> = [
-    [0, 0],
-    [1, 1],
-    [2, 2],
-    [3, 0],
-    [3, 1],
-  ];
-  for (const [c, e] of assignments) {
+  for (let i = 0; i < entrances.length; i += 1) {
     await prisma.cleanerAssignment.create({
-      data: { cleanerId: cleaners[c].id, entranceId: entrances[e].id },
+      data: { cleanerId: cleaners[i].id, entranceId: entrances[i].id },
     });
   }
 
-  // Cleanings today (a few floors)
-  await prisma.cleaning.createMany({
-    data: [
-      { cleanerId: cleaners[0].id, entranceId: entrances[0].id, floor: 1, photoPath: 'cleanings/seed/c1f1.jpg' },
-      { cleanerId: cleaners[0].id, entranceId: entrances[0].id, floor: 2, photoPath: 'cleanings/seed/c1f2.jpg' },
-      { cleanerId: cleaners[1].id, entranceId: entrances[1].id, floor: 3, photoPath: 'cleanings/seed/c2f3.jpg' },
-    ],
-  });
-
-  // Reviews — несколько за сегодня и за прошлые дни
   const now = new Date();
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
+  const ratings = [Rating.GOOD, Rating.OK, Rating.BAD, Rating.GOOD, Rating.OK];
 
-  async function createReview(entranceIdx: number, floor: number, rating: Rating, when: Date, comment?: string) {
-    const eId = entrances[entranceIdx].id;
-    const assigned = await prisma.cleanerAssignment.findMany({ where: { entranceId: eId } });
+  async function createReview(index: number) {
+    const entrance = entrances[index % entrances.length];
+    const building =
+      entrance.buildingId === buildingA.id ? buildingA : entrance.buildingId === buildingB.id ? buildingB : buildingC;
+    const when = new Date(now);
+    when.setDate(now.getDate() - (index % 7));
+    when.setHours(8 + (index % 10), (index * 7) % 60, 0, 0);
+    const assigned = await prisma.cleanerAssignment.findMany({ where: { entranceId: entrance.id } });
     await prisma.review.create({
       data: {
-        entranceId: eId,
-        floor,
-        rating,
-        comment,
+        entranceId: entrance.id,
+        floor: (index % building.floorsTotal) + 1,
+        rating: ratings[index % ratings.length],
+        comment: index % 6 === 0 ? 'Нужна повторная проверка площадки' : undefined,
         createdAt: when,
         cleaners: { create: assigned.map((a) => ({ cleanerId: a.cleanerId })) },
       },
     });
   }
 
-  await createReview(0, 1, Rating.GOOD, now, 'Чисто!');
-  await createReview(0, 2, Rating.OK, now);
-  await createReview(0, 3, Rating.BAD, now, 'Грязные перила');
-  await createReview(1, 5, Rating.GOOD, now);
-  await createReview(2, 7, Rating.BAD, yesterday, 'Мусор не убран');
-  await createReview(2, 7, Rating.GOOD, yesterday);
-  await createReview(1, 2, Rating.OK, yesterday);
+  for (let i = 0; i < 30; i += 1) {
+    await createReview(i);
+  }
+
+  const cleanings = Array.from({ length: 15 }, (_, index) => {
+    const entrance = entrances[index % entrances.length];
+    const building =
+      entrance.buildingId === buildingA.id ? buildingA : entrance.buildingId === buildingB.id ? buildingB : buildingC;
+    const cleaner = cleaners[index % cleaners.length];
+    const when = new Date(now);
+    when.setDate(now.getDate() - (index % 7));
+    when.setHours(9 + (index % 8), (index * 11) % 60, 0, 0);
+    return {
+      cleanerId: cleaner.id,
+      entranceId: entrance.id,
+      floor: (index % building.floorsTotal) + 1,
+      photoPath: `cleanings/seed/c${index + 1}.jpg`,
+      createdAt: when,
+    };
+  });
+  await prisma.cleaning.createMany({ data: cleanings });
 
   console.log('Seeded:');
   console.log(`  manager: ${manager.login} / manager123`);
-  console.log(`  cleaners: cleaner1..cleaner5 / cleaner123`);
-  console.log(`  entrances: ${entrances.length}`);
+  console.log('  cleaners: cleaner1..cleaner7 / cleaner123');
+  console.log(`  streets: 2, buildings: 3, entrances: ${entrances.length}`);
 }
 
 main()

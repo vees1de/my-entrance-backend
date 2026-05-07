@@ -17,6 +17,16 @@ export class ListReviewsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsUUID()
+  streetId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  buildingId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
   cleanerId?: string;
 
   @ApiPropertyOptional()

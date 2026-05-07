@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Rating, Role } from '@prisma/client';
+import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IStorageService, STORAGE_SERVICE } from '../storage/storage.interface';
 
@@ -9,6 +10,7 @@ type CleanerStatus = 'not_started' | 'in_progress' | 'done';
 export class CleanersService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly address: AddressService,
     @Inject(STORAGE_SERVICE) private readonly storage: IStorageService,
   ) {}
 
@@ -20,7 +22,9 @@ export class CleanersService {
       where: { role: Role.CLEANER },
       orderBy: { name: 'asc' },
       include: {
-        assignments: { include: { entrance: { select: { id: true, number: true, address: true, floorsTotal: true } } } },
+        assignments: {
+          include: { entrance: { include: { building: { include: { street: true } } } } },
+        },
       },
     });
 
@@ -67,9 +71,11 @@ export class CleanersService {
     const totalByCleaner = new Map(totalReviews.map((r) => [r.cleanerId, r._count._all]));
 
     return cleaners.map((c) => {
-      const floorsPlanned = c.assignments.reduce((sum, a) => sum + a.entrance.floorsTotal, 0);
+      const entrances = c.assignments.map((a) => this.address.serializeEntrance(a.entrance));
+      const floorsPlanned = entrances.reduce((sum, entrance) => sum + (entrance.floorsTotal ?? 0), 0);
       const floorsCompleted = todayByCleaner.get(c.id)?.size ?? 0;
       const last = lastByCleaner.get(c.id);
+      const primaryEntrance = entrances[0] ?? null;
 
       let status: CleanerStatus = 'not_started';
       if (floorsCompleted > 0 && floorsCompleted < floorsPlanned) status = 'in_progress';
@@ -80,7 +86,12 @@ export class CleanersService {
         name: c.name,
         phone: c.phone,
         shift: c.shift,
-        entrances: c.assignments.map((a) => a.entrance),
+        address: primaryEntrance?.address ?? null,
+        streetName: primaryEntrance?.streetName ?? null,
+        buildingNumber: primaryEntrance?.buildingNumber ?? null,
+        entranceNumber: primaryEntrance?.entranceNumber ?? null,
+        floorsTotal: primaryEntrance?.floorsTotal ?? null,
+        entrances,
         floorsPlanned,
         floorsCompleted,
         status,

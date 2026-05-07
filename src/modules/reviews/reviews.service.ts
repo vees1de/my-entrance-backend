@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
+import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IStorageService, STORAGE_SERVICE } from '../storage/storage.interface';
 import { CreateReviewDto } from './dto/create-review.dto';
@@ -10,14 +11,18 @@ import { ListReviewsDto } from './dto/list-reviews.dto';
 export class ReviewsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly address: AddressService,
     @Inject(STORAGE_SERVICE) private readonly storage: IStorageService,
   ) {}
 
   async create(dto: CreateReviewDto, photo: Express.Multer.File | undefined, ip: string | undefined) {
-    const entrance = await this.prisma.entrance.findUnique({ where: { id: dto.entranceId } });
+    const entrance = await this.prisma.entrance.findUnique({
+      where: { id: dto.entranceId },
+      include: { building: { include: { street: true } } },
+    });
     if (!entrance) throw new BadRequestException('Entrance not found');
-    if (dto.floor < 1 || dto.floor > entrance.floorsTotal) {
-      throw new BadRequestException(`Floor must be between 1 and ${entrance.floorsTotal}`);
+    if (dto.floor < 1 || dto.floor > entrance.building.floorsTotal) {
+      throw new BadRequestException(`Floor must be between 1 and ${entrance.building.floorsTotal}`);
     }
 
     let photoPath: string | null = null;
@@ -46,7 +51,7 @@ export class ReviewsService {
       },
       include: {
         cleaners: { include: { cleaner: { select: { id: true, name: true } } } },
-        entrance: true,
+        entrance: { include: { building: { include: { street: true } } } },
       },
     });
 
@@ -57,6 +62,14 @@ export class ReviewsService {
     const where: Prisma.ReviewWhereInput = {};
     if (query.rating) where.rating = query.rating;
     if (query.entranceId) where.entranceId = query.entranceId;
+    if (query.buildingId || query.streetId) {
+      where.entrance = {
+        building: {
+          ...(query.buildingId ? { id: query.buildingId } : {}),
+          ...(query.streetId ? { streetId: query.streetId } : {}),
+        },
+      };
+    }
     if (query.hasPhoto !== undefined) where.photoPath = query.hasPhoto ? { not: null } : null;
     if (query.dateFrom || query.dateTo) {
       where.createdAt = {};
@@ -75,7 +88,7 @@ export class ReviewsService {
         skip: query.offset ?? 0,
         include: {
           cleaners: { include: { cleaner: { select: { id: true, name: true } } } },
-          entrance: true,
+          entrance: { include: { building: { include: { street: true } } } },
         },
       }),
       this.prisma.review.count({ where }),
@@ -92,17 +105,19 @@ export class ReviewsService {
   private serialize(review: Prisma.ReviewGetPayload<{
     include: {
       cleaners: { include: { cleaner: { select: { id: true; name: true } } } };
-      entrance: true;
+      entrance: { include: { building: { include: { street: true } } } };
     };
   }>) {
+    const entrance = this.address.serializeEntrance(review.entrance);
     return {
       id: review.id,
       entranceId: review.entranceId,
-      entrance: {
-        id: review.entrance.id,
-        number: review.entrance.number,
-        address: review.entrance.address,
-      },
+      entrance,
+      address: entrance.address,
+      streetName: entrance.streetName,
+      buildingNumber: entrance.buildingNumber,
+      entranceNumber: entrance.entranceNumber,
+      floorsTotal: entrance.floorsTotal,
       floor: review.floor,
       rating: review.rating,
       comment: review.comment,

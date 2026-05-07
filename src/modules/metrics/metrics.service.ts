@@ -28,7 +28,7 @@ export class MetricsService {
         select: { rating: true },
       }),
       this.prisma.cleanerAssignment.findMany({
-        select: { cleanerId: true, entrance: { select: { floorsTotal: true } } },
+        select: { cleanerId: true, entrance: { select: { building: { select: { floorsTotal: true } } } } },
       }),
     ]);
 
@@ -37,7 +37,10 @@ export class MetricsService {
     );
     const activeCleaners = new Set(todayCleanings.map((c) => c.cleanerId)).size;
 
-    const cleaningsPlanned = plannedAgg.reduce((sum, a) => sum + a.entrance.floorsTotal, 0);
+    const cleaningsPlanned = plannedAgg.reduce(
+      (sum, a) => sum + a.entrance.building.floorsTotal,
+      0,
+    );
 
     const reviewsBad = todayReviews.filter((r) => r.rating === Rating.BAD).length;
 

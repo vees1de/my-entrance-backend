@@ -63,3 +63,15 @@ export class GenerateQrDto {
   @Type(() => QrOptionsDto)
   options?: QrOptionsDto;
 }
+
+export class GenerateBuildingQrDto {
+  @ApiProperty()
+  @IsUUID()
+  buildingId!: string;
+
+  @ApiPropertyOptional({ type: QrOptionsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QrOptionsDto)
+  options?: QrOptionsDto;
+}

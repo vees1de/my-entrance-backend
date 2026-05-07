@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth/auth.module';
+import { BuildingsModule } from './modules/buildings/buildings.module';
 import { CleaningsModule } from './modules/cleanings/cleanings.module';
 import { CleanersModule } from './modules/cleaners/cleaners.module';
 import { EntrancesModule } from './modules/entrances/entrances.module';
@@ -12,6 +13,7 @@ import { PrismaModule } from './modules/prisma/prisma.module';
 import { QrModule } from './modules/qr/qr.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { StreetsModule } from './modules/streets/streets.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { StorageModule } from './modules/storage/storage.module';
     PrismaModule,
     StorageModule,
     AuthModule,
+    StreetsModule,
+    BuildingsModule,
     EntrancesModule,
     ReviewsModule,
     CleaningsModule,

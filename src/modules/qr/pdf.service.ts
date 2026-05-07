@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { existsSync } from 'fs';
 import PDFDocument from 'pdfkit';
+import { join } from 'path';
 import { QrLayout, QrOptionsDto } from './dto/generate-qr.dto';
 
 export interface QrItem {
@@ -11,6 +13,8 @@ export interface QrItem {
 
 @Injectable()
 export class PdfService {
+  private readonly fontName = 'unicode';
+
   async render(items: QrItem[], options: QrOptionsDto): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ size: 'A4', margin: 36 });
@@ -18,6 +22,8 @@ export class PdfService {
       doc.on('data', (chunk) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
+
+      this.setupFonts(doc);
 
       const layout = options.layout ?? QrLayout.ONE_PER_PAGE;
       if (layout === QrLayout.ONE_PER_PAGE) this.renderOnePerPage(doc, items);
@@ -27,9 +33,37 @@ export class PdfService {
     });
   }
 
+  private setupFonts(doc: PDFKit.PDFDocument) {
+    const fontPath = this.resolveFontPath();
+    doc.registerFont(this.fontName, fontPath);
+    doc.font(this.fontName);
+  }
+
+  private resolveFontPath() {
+    const candidates = [
+      process.env.PDF_FONT_PATH,
+      join(process.cwd(), 'assets/fonts/DejaVuSans.ttf'),
+      '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+      '/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf',
+      '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
+      '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
+      '/System/Library/Fonts/Supplemental/Arial.ttf',
+      '/Library/Fonts/Arial Unicode.ttf',
+    ].filter(Boolean) as string[];
+
+    const fontPath = candidates.find((candidate) => existsSync(candidate));
+    if (!fontPath) {
+      throw new Error(
+        'No Unicode PDF font found. Set PDF_FONT_PATH to a .ttf font with Cyrillic support.',
+      );
+    }
+    return fontPath;
+  }
+
   private renderOnePerPage(doc: PDFKit.PDFDocument, items: QrItem[]) {
     items.forEach((item, idx) => {
       if (idx > 0) doc.addPage();
+      doc.font(this.fontName);
       const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
       const qrSize = 360;
       const x = doc.page.margins.left + (pageWidth - qrSize) / 2;
@@ -51,10 +85,13 @@ export class PdfService {
       });
 
       if (item.footer) {
-        doc.fontSize(10).fillColor('#666').text(item.footer, doc.page.margins.left, doc.page.height - 80, {
-          width: pageWidth,
-          align: 'center',
-        });
+        doc
+          .fontSize(10)
+          .fillColor('#666')
+          .text(item.footer, doc.page.margins.left, doc.page.height - 80, {
+            width: pageWidth,
+            align: 'center',
+          });
         doc.fillColor('black');
       }
     });
@@ -72,6 +109,7 @@ export class PdfService {
 
     items.forEach((item, idx) => {
       if (idx > 0 && idx % perPage === 0) doc.addPage();
+      doc.font(this.fontName);
       const local = idx % perPage;
       const col = local % cols;
       const row = Math.floor(local / cols);

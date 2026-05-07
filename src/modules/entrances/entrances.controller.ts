@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -23,9 +24,15 @@ export class EntrancesController {
   constructor(private readonly service: EntrancesService) {}
 
   @Get()
-  @Roles(Role.MANAGER, Role.CLEANER)
-  list() {
-    return this.service.list();
+  @Roles(Role.MANAGER)
+  list(@Query('buildingId', new ParseUUIDPipe({ optional: true })) buildingId?: string) {
+    return this.service.list(buildingId);
+  }
+
+  @Get(':id')
+  @Roles(Role.MANAGER)
+  details(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.service.getDetails(id);
   }
 
   @Post()

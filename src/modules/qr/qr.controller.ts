@@ -13,6 +13,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
+import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -30,6 +31,14 @@ export class QrController {
     private readonly address: AddressService,
   ) {}
 
+  @Public()
+  @Get('resolve/:token')
+  async resolve(@Param('token') token: string) {
+    const qr = await this.qr.resolveToken(token);
+    if (!qr) throw new NotFoundException('QR token not found');
+    return qr;
+  }
+
   @ApiBearerAuth()
   @Roles(Role.MANAGER)
   @Get(':entranceId/:floor')
@@ -46,7 +55,7 @@ export class QrController {
     if (floor < 1 || floor > entrance.building.floorsTotal) {
       throw new BadRequestException('Invalid floor');
     }
-    const url = this.qr.buildReviewUrl(entranceId, floor);
+    const url = await this.qr.buildReviewUrl(entranceId, floor);
     const png = await this.qr.toBuffer(url);
     res.setHeader('Content-Type', 'image/png');
     res.send(png);
@@ -72,7 +81,7 @@ export class QrController {
     const address = this.address.formatAddress(entrance);
     const items: QrItem[] = await Promise.all(
       dto.floors.map(async (floor) => ({
-        qrPng: await this.qr.toBuffer(this.qr.buildReviewUrl(dto.entranceId, floor)),
+        qrPng: await this.qr.toBuffer(await this.qr.buildReviewUrl(dto.entranceId, floor)),
         title: opts.title ?? 'Оцените уборку',
         subtitle: opts.subtitle ?? `${address}\nПодъезд ${entrance.number}, этаж ${floor}`,
         footer: opts.footer ?? 'Сканируйте камерой телефона',
@@ -103,7 +112,7 @@ export class QrController {
     const items: QrItem[] = await Promise.all(
       building.entrances.flatMap((entrance) =>
         Array.from({ length: building.floorsTotal }, (_, idx) => idx + 1).map(async (floor) => ({
-          qrPng: await this.qr.toBuffer(this.qr.buildReviewUrl(entrance.id, floor)),
+          qrPng: await this.qr.toBuffer(await this.qr.buildReviewUrl(entrance.id, floor)),
           title: opts.title ?? 'Оцените уборку',
           subtitle: opts.subtitle ?? `${address}\nПодъезд ${entrance.number}, этаж ${floor}`,
           footer: opts.footer ?? 'Сканируйте камерой телефона',

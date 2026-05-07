@@ -25,20 +25,71 @@ jobs:
   deploy:
     needs: build-test
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
     steps:
-      - name: Setup SSH
+      - name: Verify required secrets
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          missing=()
+          [ -n "${{ secrets.DEPLOY_SSH_KEY }}" ] || missing+=("DEPLOY_SSH_KEY")
+          [ -n "${{ secrets.DEPLOY_HOST }}" ]    || missing+=("DEPLOY_HOST")
+          [ -n "${{ secrets.DEPLOY_USER }}" ]    || missing+=("DEPLOY_USER")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing GitHub Actions secrets: ${missing[*]}"
+            echo "Add them at: Settings → Secrets and variables → Actions."
+            exit 1
+          fi
 
-      - name: Deploy via SSH
+      - name: Load deploy SSH key into agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust deploy host
         run: |
-          ssh -i ~/.ssh/id_ed25519 ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'cd /opt/my-entrance/backend && \
-             git fetch --all && \
-             git reset --hard origin/main && \
-             cd /opt/my-entrance && \
-             docker compose -f docker-compose.yml --env-file .env up -d --build api && \
-             docker image prune -f'
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -T 10 -t ed25519,rsa,ecdsa "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          test -s ~/.ssh/known_hosts || { echo "::error::ssh-keyscan returned nothing for $DEPLOY_HOST"; exit 1; }
+
+      - name: Deploy on prod
+        run: |
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 "$DEPLOY_USER@$DEPLOY_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          cd /opt/my-entrance/backend
+          git fetch --all --prune
+          git reset --hard origin/main
+
+          cd /opt/my-entrance
+          # Build & restart in background so the SSH session survives long npm/buildx steps
+          # on the small (1.8 GB) host. Logs collected in /tmp for the runner to tail.
+          : > /tmp/ci-deploy.log
+          nohup docker compose --env-file .env up -d --build api \
+            > /tmp/ci-deploy.log 2>&1 < /dev/null &
+          BUILD_PID=$!
+
+          # Stream build progress back to the runner (and bail if the bg job dies)
+          while kill -0 "$BUILD_PID" 2>/dev/null; do
+            sleep 5
+            tail -n 1 /tmp/ci-deploy.log 2>/dev/null || true
+          done
+          wait "$BUILD_PID" || { echo "::error::docker compose build failed"; tail -n 80 /tmp/ci-deploy.log; exit 1; }
+          tail -n 20 /tmp/ci-deploy.log
+
+          docker image prune -f >/dev/null
+
+          # Wait for /health to come back up
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3010/health >/dev/null 2>&1; then
+              echo "API healthy after $((i * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::API did not report healthy on /health within 120s"
+          docker ps -a
+          docker logs --tail 80 my-entrance-api || true
+          exit 1
+          REMOTE

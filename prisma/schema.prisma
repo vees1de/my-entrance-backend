@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLEANER
+  MANAGER
+}
+
+enum Rating {
+  BAD
+  OK
+  GOOD
+}
+
+model User {
+  id           String              @id @default(uuid())
+  login        String              @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         Role
+  shift        String?
+  createdAt    DateTime            @default(now())
+  assignments  CleanerAssignment[]
+  cleanings    Cleaning[]
+  reviewLinks  ReviewCleaner[]
+}
+
+model Entrance {
+  id          String              @id @default(uuid())
+  number      Int
+  address     String
+  floorsTotal Int
+  createdAt   DateTime            @default(now())
+  assignments CleanerAssignment[]
+  reviews     Review[]
+  cleanings   Cleaning[]
+  qrCodes     QrCode[]
+}
+
+model CleanerAssignment {
+  id         String   @id @default(uuid())
+  cleanerId  String
+  entranceId String
+  createdAt  DateTime @default(now())
+  cleaner    User     @relation(fields: [cleanerId], references: [id], onDelete: Cascade)
+  entrance   Entrance @relation(fields: [entranceId], references: [id], onDelete: Cascade)
+
+  @@unique([cleanerId, entranceId])
+  @@index([entranceId])
+}
+
+model Review {
+  id         String          @id @default(uuid())
+  entranceId String
+  floor      Int
+  rating     Rating
+  comment    String?
+  photoPath  String?
+  ipHash     String?
+  createdAt  DateTime        @default(now())
+  entrance   Entrance        @relation(fields: [entranceId], references: [id])
+  cleaners   ReviewCleaner[]
+
+  @@index([entranceId, createdAt])
+}
+
+model ReviewCleaner {
+  reviewId  String
+  cleanerId String
+  review    Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  cleaner   User   @relation(fields: [cleanerId], references: [id], onDelete: Cascade)
+
+  @@id([reviewId, cleanerId])
+  @@index([cleanerId])
+}
+
+model Cleaning {
+  id         String   @id @default(uuid())
+  cleanerId  String
+  entranceId String
+  floor      Int
+  photoPath  String
+  createdAt  DateTime @default(now())
+  cleaner    User     @relation(fields: [cleanerId], references: [id])
+  entrance   Entrance @relation(fields: [entranceId], references: [id])
+
+  @@index([cleanerId, createdAt])
+  @@index([entranceId, createdAt])
+}
+
+model QrCode {
+  id         String   @id @default(uuid())
+  entranceId String
+  floor      Int
+  token      String   @unique
+  createdAt  DateTime @default(now())
+  entrance   Entrance @relation(fields: [entranceId], references: [id], onDelete: Cascade)
+
+  @@unique([entranceId, floor])
+}

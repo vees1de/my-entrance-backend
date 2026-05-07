@@ -1,0 +1,41 @@
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Role } from '@prisma/client';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { AssignCleanerDto } from './dto/assign-cleaner.dto';
+import { CreateEntranceDto } from './dto/create-entrance.dto';
+import { EntrancesService } from './entrances.service';
+
+@ApiTags('entrances')
+@ApiBearerAuth()
+@Controller('entrances')
+export class EntrancesController {
+  constructor(private readonly service: EntrancesService) {}
+
+  @Get()
+  @Roles(Role.MANAGER, Role.CLEANER)
+  list() {
+    return this.service.list();
+  }
+
+  @Post()
+  @Roles(Role.MANAGER)
+  create(@Body() dto: CreateEntranceDto) {
+    return this.service.create(dto);
+  }
+
+  @Post(':id/assignments')
+  @Roles(Role.MANAGER)
+  assign(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: AssignCleanerDto) {
+    return this.service.assignCleaner(id, dto.cleanerId);
+  }
+
+  @Delete(':id/assignments/:cleanerId')
+  @Roles(Role.MANAGER)
+  unassign(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('cleanerId', new ParseUUIDPipe()) cleanerId: string,
+  ) {
+    return this.service.unassignCleaner(id, cleanerId);
+  }
+}

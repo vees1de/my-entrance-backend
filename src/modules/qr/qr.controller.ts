@@ -17,9 +17,19 @@ import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { GenerateBuildingQrDto, GenerateQrDto } from './dto/generate-qr.dto';
+import {
+  GenerateBuildingQrDto,
+  GenerateBuildingZipDto,
+  GenerateQrDto,
+  GenerateZipDto,
+} from './dto/generate-qr.dto';
 import { PdfService, QrItem } from './pdf.service';
 import { QrService } from './qr.service';
+import { buildZip, ZipEntry } from './zip.util';
+
+function pad(n: number, width = 2) {
+  return String(n).padStart(width, '0')
+}
 
 @ApiTags('qr')
 @Controller('qr')
@@ -127,5 +137,78 @@ export class QrController {
       `attachment; filename="qr-building-${building.number}.pdf"`,
     );
     res.send(buffer);
+  }
+
+  // ── ZIP endpoints ─────────────────────────────────────────────────
+
+  @ApiBearerAuth()
+  @Roles(Role.MANAGER)
+  @Post('generate-zip')
+  async generateZip(@Body() dto: GenerateZipDto, @Res() res: Response) {
+    const entrance = await this.prisma.entrance.findUnique({
+      where: { id: dto.entranceId },
+      include: { building: { include: { street: true } } },
+    });
+    if (!entrance) throw new NotFoundException('Entrance not found');
+    const invalid = dto.floors.find((f) => f < 1 || f > entrance.building.floorsTotal);
+    if (invalid !== undefined) {
+      throw new BadRequestException(
+        `Floor ${invalid} is out of range (1..${entrance.building.floorsTotal})`,
+      );
+    }
+
+    const entries: ZipEntry[] = await Promise.all(
+      dto.floors.map(async (floor) => ({
+        name: `podezd-${entrance.number}_etazh-${pad(floor)}.png`,
+        data: await this.qr.toBuffer(await this.qr.buildReviewUrl(entrance.id, floor), 800),
+      })),
+    );
+
+    const zip = buildZip(entries);
+    const streetSlug = entrance.building.street.name
+      .toLowerCase()
+      .replace(/[^а-яa-z0-9]+/gi, '-')
+      .slice(0, 30);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="qr-${streetSlug}-${entrance.building.number}-pod${entrance.number}.zip"`,
+    );
+    res.send(zip);
+  }
+
+  @ApiBearerAuth()
+  @Roles(Role.MANAGER)
+  @Post('generate-building-zip')
+  async generateBuildingZip(@Body() dto: GenerateBuildingZipDto, @Res() res: Response) {
+    const building = await this.prisma.building.findUnique({
+      where: { id: dto.buildingId },
+      include: { street: true, entrances: { orderBy: { number: 'asc' } } },
+    });
+    if (!building) throw new NotFoundException('Building not found');
+
+    const allEntries: ZipEntry[] = [];
+    for (const entrance of building.entrances) {
+      const floors = Array.from({ length: building.floorsTotal }, (_, i) => i + 1);
+      const entranceEntries = await Promise.all(
+        floors.map(async (floor) => ({
+          name: `podezd-${entrance.number}/etazh-${pad(floor)}.png`,
+          data: await this.qr.toBuffer(await this.qr.buildReviewUrl(entrance.id, floor), 800),
+        })),
+      );
+      allEntries.push(...entranceEntries);
+    }
+
+    const zip = buildZip(allEntries);
+    const streetSlug = building.street.name
+      .toLowerCase()
+      .replace(/[^а-яa-z0-9]+/gi, '-')
+      .slice(0, 30);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="qr-${streetSlug}-${building.number}.zip"`,
+    );
+    res.send(zip);
   }
 }

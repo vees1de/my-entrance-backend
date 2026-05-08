@@ -75,3 +75,23 @@ export class GenerateBuildingQrDto {
   @Type(() => QrOptionsDto)
   options?: QrOptionsDto;
 }
+
+export class GenerateZipDto {
+  @ApiProperty()
+  @IsUUID()
+  entranceId!: string;
+
+  @ApiProperty({ type: [Number], example: [1, 2, 3] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  floors!: number[];
+}
+
+export class GenerateBuildingZipDto {
+  @ApiProperty()
+  @IsUUID()
+  buildingId!: string;
+}

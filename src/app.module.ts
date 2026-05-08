@@ -18,11 +18,13 @@ import { StreetsModule } from './modules/streets/streets.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Default: generous global cap so dashboard/list endpoints aren't blocked.
+    // Tight per-IP anti-spam for POST /reviews lives on the controller via @Throttle.
     ThrottlerModule.forRootAsync({
       useFactory: () => [
         {
-          ttl: parseInt(process.env.THROTTLE_TTL ?? '3600', 10) * 1000,
-          limit: parseInt(process.env.THROTTLE_LIMIT ?? '5', 10),
+          ttl: parseInt(process.env.THROTTLE_TTL ?? '60', 10) * 1000,
+          limit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
         },
       ],
     }),

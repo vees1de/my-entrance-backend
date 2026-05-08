@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { AddressService } from '../address/address.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,11 +22,6 @@ export class CleaningsService {
     if (dto.floor < 1 || dto.floor > entrance.building.floorsTotal) {
       throw new BadRequestException(`Floor must be between 1 and ${entrance.building.floorsTotal}`);
     }
-
-    const assignment = await this.prisma.cleanerAssignment.findUnique({
-      where: { cleanerId_entranceId: { cleanerId, entranceId: dto.entranceId } },
-    });
-    if (!assignment) throw new ForbiddenException('Not assigned to this entrance');
 
     const photoPath = await this.storage.saveImage(photo.buffer, 'cleanings');
 

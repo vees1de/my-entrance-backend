@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBuildingDto } from './dto/create-building.dto';
+import { UpdateBuildingDto } from './dto/update-building.dto';
 
 @Injectable()
 export class BuildingsService {
@@ -30,5 +31,36 @@ export class BuildingsService {
       }
       throw e;
     }
+  }
+
+  async update(id: string, dto: UpdateBuildingDto) {
+    try {
+      return await this.prisma.building.update({
+        where: { id },
+        data: dto,
+        include: { street: true },
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new BadRequestException('Building not found');
+      }
+      throw e;
+    }
+  }
+
+  async remove(id: string) {
+    const entrances = await this.prisma.entrance.count({ where: { buildingId: id } });
+    if (entrances > 0) {
+      throw new BadRequestException(`Cannot delete building: it has ${entrances} entrance(s). Remove them first.`);
+    }
+    try {
+      await this.prisma.building.delete({ where: { id } });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new BadRequestException('Building not found');
+      }
+      throw e;
+    }
+    return { ok: true };
   }
 }

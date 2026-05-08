@@ -4,7 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -26,7 +26,8 @@ async function bootstrap() {
   );
 
   const uploadDir = config.get<string>('UPLOAD_DIR') ?? './uploads';
-  app.useStaticAssets(join(process.cwd(), uploadDir), { prefix: '/static/' });
+  const uploadRoot = isAbsolute(uploadDir) ? uploadDir : join(process.cwd(), uploadDir);
+  app.useStaticAssets(uploadRoot, { prefix: '/static/' });
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Мой подъезд API')
